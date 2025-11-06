@@ -1,0 +1,6 @@
+streamlit
+plyer
+python-dateutil
+pytz
+ics
+underthesea

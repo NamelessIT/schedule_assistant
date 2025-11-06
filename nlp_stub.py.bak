@@ -1,0 +1,11 @@
+# nlp_stub.py
+"""
+Placeholder parser - returns None.
+Replace with nlp.parse_text (the real implementation).
+"""
+from typing import Optional, Dict
+
+def parse_text(text: str) -> Optional[Dict]:
+    # Placeholder: return None (means cannot parse)
+    # Replace this function with the implementation in nlp.py
+    return None

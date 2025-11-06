@@ -1,0 +1,8 @@
+1. Nhắc tôi họp nhóm lúc 10 giờ sáng mai ở phòng 302.
+2. Tối mai 19:30 gặp Tùng tại quán cà phê, nhắc trước 10 phút.
+3. Họp dự án 15/11/2025 14:00 - 15:30, phòng 101, nhắc trước 30 phút.
+4. Sinh nhật Lan ngày 20/12 (cả ngày), nhắc trước 1 ngày.
+5. Tập gym mỗi thứ Hai lúc 18h.
+6. Nhắc tôi họp nhóm lúc 15 giờ 50 ở phòng 302 hôm nay
+7. tạo sự kiện test1  trước 5 phút	, nhắc trước 1 phút
+8. tạo cho tui sự kiện test1 lúc 16:19 ở hồ gươm, nhắc tui trước 1 phút
