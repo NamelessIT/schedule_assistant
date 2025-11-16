@@ -6,3 +6,8 @@
 6. Nhắc tôi họp nhóm lúc 15 giờ 50 ở phòng 302 hôm nay
 7. tạo sự kiện test1  trước 5 phút	, nhắc trước 1 phút
 8. tạo cho tui sự kiện test1 lúc 16:19 ở hồ gươm, nhắc tui trước 1 phút
+9. tạo cho tui một sự kiện vào lúc 2 ngày nữa lúc mười một giờ và nhớ nhắc tui trước 5 phút
+10. tạo cho sự kiện gặp mặt lúc 2h chiều tuần sau, nhắc tui trước 20 phút
+11. Nhắc tui 5 phút nữa đi học, nhắc trước 1 phút
+12. Nhắc tôi họp nhóm lúc mười giờ sáng mai ở phòng 302
+13. 5 phút nữa tui muốn họp nhóm, nhắc tui trước 3 phút

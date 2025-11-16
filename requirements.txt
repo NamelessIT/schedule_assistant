@@ -1,6 +1,9 @@
-streamlit
-plyer
-python-dateutil
-pytz
-ics
-underthesea
+streamlit==1.39.0
+python-dateutil==2.9.0.post0
+pytz==2024.1
+plyer==2.1.0
+underthesea==6.3.1
+underthesea-core==1.0.4
+regex==2024.5.15
+relativedelta==0.1.0
+requests==2.32.3
