@@ -11,3 +11,20 @@
 11. Nhắc tui 5 phút nữa đi học, nhắc trước 1 phút
 12. Nhắc tôi họp nhóm lúc mười giờ sáng mai ở phòng 302
 13. 5 phút nữa tui muốn họp nhóm, nhắc tui trước 3 phút
+14. Nhắc tôi dậy lúc 6 giờ sáng ngày mai.
+15. Nhắc sinh nhật mẹ vào 8h sáng ngày 5/8.
+16. Tạo sự kiện kiểm tra sức khỏe lúc 9h ngày 1/12, nhắc trước 2 ngày.
+17. Nhắc uống thuốc mỗi ngày lúc 7h tối.
+18. Nhắc tôi nộp báo cáo vào thứ sáu tuần này lúc 23h.
+19. Lịch họp phòng Nhân sự lúc 8 giờ thứ Hai hàng tuần.
+20. Ăn sáng với Linh ngày mai lúc 7h15, nhắc 10 phút trước.
+21. Nhắc việc gia hạn bảo hiểm ngày 21/3 vào lúc 11h.
+22. Lập lịch gọi điện cho khách lúc 15h ngày kia.
+23. Kỷ niệm cưới 18/11, nhắc trước 1 tuần.
+24. Tập yoga lúc 5h sáng chủ nhật hằng tuần.
+25. Nhắc tôi kiểm tra email lúc 11h trưa mỗi ngày.
+26. Đưa xe đi bảo dưỡng lúc 8h 25/12, nhắc tôi trước 3 ngày.
+27. Cuộc hẹn phỏng vấn 13h30 ngày 30/11.
+28. Nhắc tôi học tiếng Anh tối thứ năm hàng tuần lúc 20h.
+29. Nhắc tôi thanh toán hóa đơn ngày 1 hàng tháng.
+30. Tạo sự kiện "Kết thúc dự án" vào 31/12 lúc 17h, nhắc trước 1 ngày.
