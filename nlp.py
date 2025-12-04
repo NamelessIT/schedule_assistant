@@ -64,11 +64,22 @@ ASCII_MAP = {
     "tois mai": "tối mai",
     "chieu mai": "chiều mai",
     "sang mai": "sáng mai",
+    "ngay mai": "ngày mai",
+    "ngay": "ngày",
+    "ngay nua": "ngày nữa",
+    "motngay": "một ngày",
+    "motngaynua": "một ngày nữa",
+    "mot ngay nua": "một ngày nữa",
+    "ngay mot": "ngày mốt",    # khi bị chuyển không dấu
+    "ngay mốt": "ngày mốt",
+    "ngay mot": "ngày mốt",    # thêm dòng này để override lỗi
+
 
     "ngay hom nay": "hôm nay",
     "ngay mai": "mai",
     "ngay kia": "mốt",
-    "ngay mot": "một ngày",
+    "motngay": "một ngày",
+    "mot ngay ": "một ngày",
     "tuan nay": "tuần này",
     "tuan sau": "tuần sau",
     "tuan toi": "tuần tới",
@@ -111,6 +122,9 @@ ASCII_MAP = {
     "phujt": "phút",
     "luk": "lúc",
     "dk": "được",
+    "hop": "họp",
+    "hopj": "họp",
+    "hopw": "họp",
 
     "di lam": "đi làm",
     "di hoc": "đi học",
@@ -129,7 +143,7 @@ ASCII_MAP = {
 # Vietnamese number words -> digits
 # -------------------------
 VN_NUM = {
-    "không":0, "mot":1, "một":1, "mốt":1,
+    "không":0, "mot":1, "một":1,
     "hai":2, "ba":3, "bốn":4, "bon":4, "tư":4,
     "năm":5, "nam":5, "sáu":6, "sau":6, "bay":7, "bảy":7, "tam":8, "tám":8,
     "chín":9, "chin":9, "muoi":10, "mười":10, "mười một":11, "muoi mot":11,
@@ -178,6 +192,8 @@ def replace_vn_num(s: str) -> str:
 def norm(raw: str) -> str:
     """Normalization used for time/date parsing: do NOT remove diacritics globally."""
     t = raw.lower().strip()
+    # protect "mốt" so ascii-map won't break it
+    t = re.sub(r'\bm[ôo]́?t\b', '__MOT__', t)
     # apply ascii map (handles both no-diacritics and ascii shortcut)
     t = apply_ascii_map(t)
     # replace numbers words
@@ -186,6 +202,9 @@ def norm(raw: str) -> str:
     t = t.replace(".", ":")
     t = re.sub(r"[,;()]+", " ", t)
     t = re.sub(r"\s+", " ", t).strip()
+    # restore protected mốt
+    t = t.replace('__MOT__', 'mốt')
+
     return t
 
 # -------------------------
@@ -288,7 +307,9 @@ def extract_date(t: str) -> Optional[date]:
         return today
     if re.search(r'\bmai\b', t):
         return today + timedelta(days=1)
-    if re.search(r'\bmốt\b|\bmot ngay nua\b|\bmot ngay\b', t):
+    if re.search(r'\b(mốt|mot|mót|môt)\b', t):
+        return today + timedelta(days=2)
+    if re.search(r'(ngày|ngay)\s+(mốt|mot|mót|môt)\b', t):
         return today + timedelta(days=2)
     # "3 ngày nữa"
     m = re.search(r'(\d+)\s*ngày nua|\b(\d+)\s*ngay nua', t)
@@ -384,7 +405,7 @@ def clean_event_name(t: str) -> str:
     s = re.sub(r'nhắc.*trước.*', '', s)
     s = re.sub(r'\blúc\b.*', '', s)
     s = re.sub(r'(o|tai)\s+[^,.;]+', '', s)
-    s = re.sub(r'(hôm nay|hom nay|mai|mốt|mot|sáng|sang|trưa|trua|chiều|chieu|tối|toi|đêm|dem)', '', s)
+    s = re.sub(r'(hôm nay|hom nay|mai|sáng|sang|trưa|trua|chiều|chieu|tối|toi|đêm|dem)', '', s)
     s = re.sub(r'\d{1,2}[:h]\d{0,2}', '', s)
     s = re.sub(r'\s+', ' ', s).strip()
     return s if s else "Sự kiện"
