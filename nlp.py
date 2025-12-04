@@ -1,50 +1,25 @@
-# nlp.py (v6.1) — fixed event-name extraction for patterns like:
-# "5 phút nữa tui muốn họp nhóm, nhắc tui trước 3 phút"
+# nlp.py v8.1
+# - Fix: không remove_diacritics trước khi parse time/date (không phá dateparser)
+# - Improved ASCII/no-diacritics mapping (works for spaced phrases and no-diacritics input)
+# - Single clean_event_name implementation (no duplicates)
+# - Better handling of natural time phrases (tầm chiều, cuối tuần...)
+# - Keep remove_diacritics for intent/event-name & location extraction only
 
 import re
+import unicodedata
 from typing import Optional, Dict
-from datetime import datetime, timedelta, date, time
+from datetime import datetime, timedelta, time, date
 from dateutil import parser as dateparser
 import pytz
 
-# Optional Underthesea
-try:
-    from underthesea import ner as under_ner
-    HAS_UNDER = True
-except:
-    HAS_UNDER = False
-
 LOCAL_TZ = pytz.timezone("Asia/Ho_Chi_Minh")
 
-# -------------------------------------
-# VN number map
-# -------------------------------------
-VN_NUM = {
-    "không":0, "một":1, "mốt":1, "hai":2, "ba":3, "bốn":4, "tư":4,
-    "năm":5, "sáu":6, "bảy":7, "tám":8, "chín":9,
-    "mười":10, "mười một":11, "mười hai":12, "mười ba":13,
-    "mười bốn":14, "mười lăm":15, "mười sáu":16, "mười bảy":17,
-    "mười tám":18, "mười chín":19,
-    "hai mươi":20, "hai mươi mốt":21, "hai mươi hai":22, "hai mươi ba":23
-}
-
-def replace_vn_num(s: str) -> str:
-    s2 = s.lower()
-    for k in sorted(VN_NUM.keys(), key=len, reverse=True):
-        s2 = re.sub(rf"\b{k}\b", str(VN_NUM[k]), s2)
-    return s2
-
-# -------------------------------------
-# normalize
-# -------------------------------------
-def norm(text: str) -> str:
-    t = text.strip().lower()
-    t = replace_vn_num(t)
-    t = t.replace("giờ", "h")
-    t = t.replace(".", ":")
-    t = re.sub(r"[,;()]", " ", t)
-    t = re.sub(r"\s+", " ", t).strip()
-    return t
+# -------------------------
+# Helpers
+# -------------------------
+def remove_diacritics(s: str) -> str:
+    nfkd_form = unicodedata.normalize('NFKD', s)
+    return "".join([c for c in nfkd_form if not unicodedata.combining(c)])
 
 def to_iso(dt: datetime) -> str:
     if dt.tzinfo is None:
@@ -53,96 +28,287 @@ def to_iso(dt: datetime) -> str:
         dt = dt.astimezone(LOCAL_TZ)
     return dt.replace(microsecond=0).isoformat()
 
-# -------------------------------------
-# reminder extraction
-# -------------------------------------
-def extract_reminder(text: str) -> int:
-    m = re.search(r"nhắc(?: tôi| tui)?\s*(?:trước)?\s*(\d+)\s*(phút|p|giờ|g|ngày)?", text)
-    if not m:
-        return 15
-    n = int(m.group(1))
-    unit = m.group(2) or "phút"
-    if "ngày" in unit: return n * 1440
-    if "giờ" in unit or unit == "g": return n * 60
-    return n
+# -------------------------
+# ASCII / shorthand maps
+# -------------------------
+# Keep keys lowercased, include both accented and non-accented forms via code below.
+ASCII_MAP = {
+    # times / shorthand
+    "gio": "giờ", "g": "giờ", "h": "giờ",
+    "phut": "phút", "ph": "phút", "p": "phút",
 
-# -------------------------------------
-# relative minutes/hours
-# -------------------------------------
-def get_rel_minutes(t: str) -> Optional[int]:
-    m = re.search(r"(\d+)\s*(phút|p)\s*nữa", t)
-    return int(m.group(1)) if m else None
+    # time-of-day
+    "sang": "sáng", "trua": "trưa", "chieu": "chiều", "toi": "tối", "dem": "đêm",
 
-def get_rel_hours(t: str) -> Optional[int]:
-    m = re.search(r"(\d+)\s*(giờ|h)\s*nữa", t)
-    return int(m.group(1)) if m else None
+    # verbs/pronouns
+    "tui": "tui", "toi": "tôi", "minh": "mình",
+    "tao": "tạo", "tao ra": "tạo", "tao cho": "tạo cho", "giup": "giúp", "hay": "hãy",
 
-# -------------------------------------
-# location
-# -------------------------------------
-def extract_location(text: str) -> Optional[str]:
-    if HAS_UNDER:
-        try:
-            ents = under_ner(text)
-            buf = []
-            locs = []
-            for tok, tag in ents:
-                if tag in ("LOC", "B-LOC", "I-LOC"):
-                    buf.append(tok)
-                else:
-                    if buf:
-                        locs.append(" ".join(buf)); buf = []
-            if buf: locs.append(" ".join(buf))
-            if locs: return locs[0]
-        except:
-            pass
-    m = re.search(r"\b(?:ở|tại)\s+([^,.;]+)", text)
-    if m:
-        loc = m.group(1).strip()
-        loc = re.sub(r"(nhé|giúp|giùm).*", "", loc).strip()
-        return loc
-    return None
+    # multi-word calendar phrases (use spaced keys too)
+    "tuần sau": "tuần sau", "tuan sau": "tuần sau",
+    "tuần tới": "tuần tới", "tuan toi": "tuần tới",
+    "cuối tuần": "cuối tuần", "cuoi tuan": "cuối tuần",
+    "giữa tuần": "giữa tuần", "giu a tuan": "giữa tuần", "dau tuần": "đầu tuần", "dau tuan": "đầu tuần",
+    "tháng sau": "tháng sau", "thang sau": "tháng sau",
 
-# -------------------------------------
-# time explicit
-# -------------------------------------
-def extract_time(t: str):
-    m = re.search(r"\b(\d{1,2})[:h](\d{1,2})\b", t)
-    if m: return int(m.group(1)), int(m.group(2))
-    m2 = re.search(r"\b(\d{1,2})h\b", t)
-    if m2: return int(m2.group(1)), 0
-    return None
+    "buoi sang": "sáng",
+    "buoi trua": "trưa",
+    "buoi chieu": "chiều",
+    "buoi toi": "tối",
+    "ban dem": "đêm",
+    "khuya": "khuya",
+    "som": "sớm",
+    "toi nay": "tối nay",
+    "sang nay": "sáng nay",
+    "chieu nay": "chiều nay",
+    "tois mai": "tối mai",
+    "chieu mai": "chiều mai",
+    "sang mai": "sáng mai",
 
-# -------------------------------------
-# date logic
-# -------------------------------------
-WEEKDAY = {
-    "hai":0,"thứ hai":0,"th2":0,"thứ 2":0,
-    "ba":1,"thứ ba":1,"th3":1,"thứ 3":1,
-    "tư":2,"thứ tư":2,"th4":2,"thứ 4":2,
-    "năm":3,"thứ năm":3,"th5":3,"thứ 5":3,
-    "sáu":4,"thứ sáu":4,"th6":4,"thứ 6":4,
-    "bảy":5,"thứ bảy":5,"th7":5,"thứ 7":5,
-    "chủ nhật":6,"cn":6,"chủ n":6,"thứ chủ nhật":6,"thứ cn":6,"thứ 8":6 
+    "ngay hom nay": "hôm nay",
+    "ngay mai": "mai",
+    "ngay kia": "mốt",
+    "ngay mot": "một ngày",
+    "tuan nay": "tuần này",
+    "tuan sau": "tuần sau",
+    "tuan toi": "tuần tới",
+    "tuan truoc": "tuần trước",
+    "thang nay": "tháng này",
+    "thang sau": "tháng sau",
+    "thang toi": "tháng tới",
+    "cuoi thang": "cuối tháng",
+    "giua thang": "giữa tháng",
+    "dau thang": "đầu tháng",
+    "giua tuan": "giữa tuần",
+    "cuoi tuan": "cuối tuần",
+
+    "nhac": "nhắc",
+    "nhac nho": "nhắc nhở",
+    "bao": "bảo",
+    "goi": "gọi",
+    "lap": "lập",
+    "hen": "hẹn",
+    "dat": "đặt",
+    "tao lich": "tạo lịch",
+    "tao su kien": "tạo sự kiện",
+    "them": "thêm",
+
+    "nhacj": "nhắc",
+    "nhawk": "nhắc",
+    "nhacn": "nhắc",
+    "thoigian": "thời gian",
+    "nhacws": "nhắc",
+    "phutj": "phút",
+    "phutw": "phút",
+    "gioj": "giờ",
+    "phuts": "phút",
+    "phut s": "phút",
+    "giow": "giờ",
+    "giowf": "giờ",
+    "giof": "giờ",
+    "gjo": "giờ",
+    "pjut": "phút",
+    "phujt": "phút",
+    "luk": "lúc",
+    "dk": "được",
+
+    "di lam": "đi làm",
+    "di hoc": "đi học",
+    "di choi": "đi chơi",
+    "gap": "gặp",
+    "hen gap": "hẹn gặp",
+    "hop": "họp",
+    "hop nhom": "họp nhóm",
+    "cf": "cà phê",
+    "cafe": "cà phê",
+    "truong": "trường",
+    "quan": "quán",
 }
+
+# -------------------------
+# Vietnamese number words -> digits
+# -------------------------
+VN_NUM = {
+    "không":0, "mot":1, "một":1, "mốt":1,
+    "hai":2, "ba":3, "bốn":4, "bon":4, "tư":4,
+    "năm":5, "nam":5, "sáu":6, "sau":6, "bay":7, "bảy":7, "tam":8, "tám":8,
+    "chín":9, "chin":9, "muoi":10, "mười":10, "mười một":11, "muoi mot":11,
+    "mười hai":12, "muoi hai":12,
+    "muoi ba": 13,
+    "muoi bon": 14,
+    "muoi lam": 15,
+    "muoi sau": 16,
+    "muoi bay": 17,
+    "muoi tam": 18,
+    "muoi chin": 19,
+    "hai muoi": 20,
+    "hai muoi mot": 21,
+    "hai muoi hai": 22,
+    "hai muoi ba": 23,
+    "ba muoi": 30,
+    "bon muoi": 40,
+    "nam muoi": 50,
+    "sau muoi": 60,
+}
+
+def apply_ascii_map(s: str) -> str:
+    """Apply ASCII_MAP robustly. Accept both normal and no-diacritics input."""
+    txt = s
+    # First handle larger/longer keys first (sort by length desc)
+    keys = sorted(ASCII_MAP.keys(), key=lambda x: len(x), reverse=True)
+    for k in keys:
+        v = ASCII_MAP[k]
+        # match both original key and its no-diacritics variant
+        k_nd = remove_diacritics(k)
+        # Replace occurrences with word boundary guard (avoid mid-word replacements)
+        pattern1 = rf'(?<!\w){re.escape(k)}(?!\w)'
+        pattern2 = rf'(?<!\w){re.escape(k_nd)}(?!\w)'
+        txt = re.sub(pattern1, v, txt)
+        if k_nd != k:
+            txt = re.sub(pattern2, v, txt)
+    return txt
+
+def replace_vn_num(s: str) -> str:
+    txt = s
+    # longest-first
+    for k in sorted(VN_NUM.keys(), key=len, reverse=True):
+        txt = re.sub(rf'(?<!\w){re.escape(k)}(?!\w)', str(VN_NUM[k]), txt)
+    return txt
+
+def norm(raw: str) -> str:
+    """Normalization used for time/date parsing: do NOT remove diacritics globally."""
+    t = raw.lower().strip()
+    # apply ascii map (handles both no-diacritics and ascii shortcut)
+    t = apply_ascii_map(t)
+    # replace numbers words
+    t = replace_vn_num(t)
+    # common punctuation
+    t = t.replace(".", ":")
+    t = re.sub(r"[,;()]+", " ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    return t
+
+# -------------------------
+# Time extraction
+# -------------------------
+def extract_time(t: str) -> Optional[tuple]:
+    # 24h style 10:30
+    m = re.search(r'\b(\d{1,2}):(\d{1,2})\b', t)
+    if m:
+        h = int(m.group(1)); mn = int(m.group(2))
+        return h, mn
+
+    # 10h30 or "10 h 30" or "10 giờ 30"
+    m = re.search(r'\b(\d{1,2})\s*(?:h|giờ)\s*(\d{1,2})\b', t)
+    if m:
+        h = int(m.group(1)); mn = int(m.group(2))
+        # consider time of day words
+        if re.search(r'\bsáng\b', t) and h == 12:
+            h = 0
+        if re.search(r'\btrưa\b', t) and h < 12:
+            h = 12
+        if re.search(r'\b(chiều|tối|đêm)\b', t) and h < 12:
+            h += 12
+        return h, mn
+
+    # 10h, 10 h, 10 giờ
+    m = re.search(r'\b(\d{1,2})\s*(?:h|giờ)\b', t)
+    if m:
+        h = int(m.group(1)); mn = 0
+        if re.search(r'\bsáng\b', t) and h == 12:
+            h = 0
+        if re.search(r'\btrưa\b', t) and h < 12:
+            h = 12
+        if re.search(r'\b(chiều|tối|đêm)\b', t) and h < 12:
+            h += 12
+        return h, mn
+
+    return None
+
+# -------------------------
+# Natural time guesses (tầm chiều / tầm tối)
+# -------------------------
+def guess_natural_time(t: str) -> Optional[time]:
+    if re.search(r'\btầm chiều\b|\btam chieu\b|\btam chieu\b', t):
+        return time(15, 0)
+    if re.search(r'\btầm tối\b|\btam toi\b', t):
+        return time(19, 0)
+    if 'giữa trưa' in t or 'giu a trua' in t:
+        return time(12, 0)
+    return None
+
+# -------------------------
+# Date extraction
+# -------------------------
+WEEKDAY = {
+    "thu hai":0, "th2":0, "hai":0,
+    "thu ba":1, "th3":1, "ba":1,
+    "thu tu":2, "th4":2, "tu":2,
+    "thu nam":3, "th5":3, "nam":3,
+    "thu sau":4, "th6":4, "sau":4,
+    "thu bay":5, "th7":5, "bay":5,
+    "chu nhat":6, "cn":6
+}
+
+def extract_advanced_relative_date(t: str) -> Optional[date]:
+    now = datetime.now(LOCAL_TZ).date()
+    wd = now.weekday()
+    # tuần sau / tuần tới
+    if re.search(r'tuần sau|tuan sau|tuần tới|tuan toi', t):
+        return now + timedelta(days=7)
+    if re.search(r'cuối tuần|cuoi tuan', t):
+        # find next saturday/sunday -> choose sunday as "cuối tuần"
+        delta = (6 - wd) if wd <= 6 else 0
+        if delta < 0:
+            delta += 7
+        return now + timedelta(days=delta)
+    if re.search(r'đầu tuần|dau tuan', t):
+        # next monday
+        delta = (0 - wd) if wd <= 0 else (7 - wd)
+        if delta == 0:
+            delta = 7
+        return now + timedelta(days=delta)
+    if re.search(r'tháng sau|thang sau', t):
+        # next month same day (fallback safe)
+        y = now.year; m = now.month + 1
+        if m > 12:
+            m = 1; y += 1
+        d = min(now.day, 28)  # safe
+        return date(y, m, d)
+    return None
 
 def extract_date(t: str) -> Optional[date]:
     today = datetime.now(LOCAL_TZ).date()
-    if "hôm nay" in t: return today
-    if "mai" in t: return today + timedelta(days=1)
-    if "mốt" in t: return today + timedelta(days=2)
-    m = re.search(r"(\d+)\s*ngày nữa", t)
-    if m: return today + timedelta(days=int(m.group(1)))
+    # advanced patterns first
+    adv = extract_advanced_relative_date(t)
+    if adv:
+        return adv
+
+    if re.search(r'\bhôm nay\b|\bhom nay\b', t):
+        return today
+    if re.search(r'\bmai\b', t):
+        return today + timedelta(days=1)
+    if re.search(r'\bmốt\b|\bmot ngay nua\b|\bmot ngay\b', t):
+        return today + timedelta(days=2)
+    # "3 ngày nữa"
+    m = re.search(r'(\d+)\s*ngày nua|\b(\d+)\s*ngay nua', t)
+    if m:
+        g = m.group(1) or m.group(2)
+        try:
+            return today + timedelta(days=int(g))
+        except:
+            pass
+    # weekday phrases
     for k, wd in WEEKDAY.items():
         if k in t:
-            cur = today.weekday()
-            delta = (wd - cur + 7) % 7
-            if delta == 0: delta = 7
+            delta = (wd - today.weekday() + 7) % 7
+            if delta == 0:
+                delta = 7
             return today + timedelta(days=delta)
-    m = re.search(r"(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?", t)
+    # explicit dd/mm or dd/mm/yyyy
+    m = re.search(r'(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?', t)
     if m:
-        d = int(m.group(1)); mo = int(m.group(2))
-        y = m.group(3)
+        d = int(m.group(1)); mo = int(m.group(2)); y = m.group(3)
         if y:
             y = int(y); 
             if y < 100: y += 2000
@@ -154,122 +320,145 @@ def extract_date(t: str) -> Optional[date]:
             return None
     return None
 
-# -------------------------------------
-# repeat detection
-# -------------------------------------
+# -------------------------
+# Reminder
+# -------------------------
+def extract_reminder(t: str) -> int:
+    m = re.search(r'nhắc(?: tôi| tui)?\s*(?:trước)?\s*(\d+)\s*(phút|phut|p|ph|giờ|g|h|ngày|ngay)?', t)
+    if not m:
+        return 15
+    n = int(m.group(1))
+    unit = (m.group(2) or "phút")
+    if 'ngày' in unit or 'ngay' in unit:
+        return n * 1440
+    if unit in ('giờ','gio','g','h'):
+        return n * 60
+    return n
+
 def extract_repeat(t: str) -> Optional[str]:
-    if re.search(r"(mỗi ngày|hàng ngày|daily)", t): return "daily"
-    if re.search(r"(mỗi tuần|hàng tuần|weekly|mỗi thứ)", t): return "weekly"
-    if re.search(r"(mỗi tháng|hàng tháng|monthly)", t): return "monthly"
+    if re.search(r'mỗi ngày|moi ngay|hàng ngày|hang ngay', t): return "daily"
+    if re.search(r'mỗi tuần|moi tuan|hang tuan|hàng tuần|hang tuan', t): return "weekly"
+    if re.search(r'mỗi tháng|moi thang|hang thang|hàng tháng|hang thang', t): return "monthly"
+    # extended patterns "mỗi 2 ngày" -> every_2_ngay
+    m = re.search(r'moi\s+(\d+)\s*(ngay|tuan|thang)', t)
+    if m:
+        return f"every_{m.group(1)}_{m.group(2)}"
     return None
 
-# -------------------------------------
-# improved event name extraction
-# -------------------------------------
-def extract_event_candidate_from_intent(t_raw: str) -> Optional[str]:
-    """
-    Try to capture patterns where user says 'muốn/cần/định/đặt/hãy' after a relative time.
-    e.g. '5 phút nữa tui muốn họp nhóm, nhắc tui trước 3 phút' ->
-          capture 'họp nhóm'
-    Return None if not found.
-    """
-    # Normalize spaces and commas
-    s = re.sub(r"\s+", " ", t_raw).strip()
-    # Patterns to detect verbs expressing intent
+# -------------------------
+# Event name / intent extraction (use remove_diacritics here for robust matching)
+# -------------------------
+def extract_event_candidate_from_intent(raw: str) -> Optional[str]:
+    s = remove_diacritics(raw.lower())
+    s = apply_ascii_map(s)
+    s = replace_vn_num(s)
+    s = re.sub(r'\s+', ' ', s).strip()
+
+    # patterns for intent (no-diacritics)
     patterns = [
-        r"(?:^|\b)(?:tôi|tui|mình)?\s*(?:muốn|cần|muốn được|định|muốn tổ chức|muốn họp|đặt|hãy|giúp)\s+(.*?)(?:,|nhắc|lúc|ở|tại|$)",
-        r"(?:^|\b)(?:tôi|tui|mình)?\s*(.*?)(?:,|nhắc|lúc|ở|tại|$)"  # fallback broad capture
+        r'(?:muon|can|dinh|hay|giup|tao|tao cho|tao ra)\s+(.*?)(?:,|nhac|luc|o|tai|$)',
+        r'(?:toi|tui|tao|minh)\s+(.*?)(?:,|nhac|luc|o|tai|$)'
     ]
     for p in patterns:
         m = re.search(p, s)
         if m:
             cand = m.group(1).strip()
-            # remove leading pronouns if still present
-            cand = re.sub(r"^(tôi|tui|mình)\s+", "", cand).strip()
-            # remove trailing residual 'tui' or 'tôi'
-            cand = re.sub(r"\s+(tui|tôi)$", "", cand).strip()
-            # if candidate is not empty and not just words like 'nhắc' keep it
-            if cand and len(cand) <= 120:
-                # remove phrases that look like reminders or time words
-                cand = re.sub(r"\b(nhắc|trước|phút|giờ|h|ngày|lúc|ở|tại)\b.*", "", cand).strip()
-                if cand:
-                    return cand
+            cand = re.sub(r'\b(toi|tui|tao|minh)\b', '', cand)
+            cand = re.sub(r'\b(nhac|truoc|phut|gio|h|ngay)\b.*', '', cand)
+            cand = re.sub(r'\bluc\b.*', '', cand)
+            cand = re.sub(r'(o|tai)\s+.*', '', cand)
+            cand = re.sub(r'\s+', ' ', cand).strip()
+            if cand:
+                # try to restore accents roughly? keep as is (no-diacritics ok)
+                return cand
     return None
 
 def clean_event_name(t: str) -> str:
-    """
-    t is a preprocessed text (lowercased, numbers replaced)
-    Use multiple strategies:
-    1) Try intent-capture function (muốn / cần / hãy ...)
-    2) Fallback: remove common noise words and time/location fragments
-    """
-    # 1) direct intent capture
+    # t is normalized (no-diacritics or ascii-mapped). Use intent capture first.
     cand = extract_event_candidate_from_intent(t)
     if cand:
-        # final cleanup
-        s = cand
-        s = re.sub(r"\b(sự kiện)\b", "", s)
-        s = re.sub(r"\b(tui|tôi|mình)\b", "", s)
-        s = re.sub(r"\s+", " ", s).strip()
-        if s:
-            return s
-
-    # 2) fallback cleaning
+        return cand.strip()
     s = t
-    s = re.sub(r"\b(nhắc|nhắc tôi|nhắc tui|tạo|tạo cho tôi|tạo cho tui|sự kiện|hãy|giúp)\b", "", s)
-    s = re.sub(r"\d+\s*(phút|giờ|p|g)\s*nữa", "", s)
-    s = re.sub(r"nhắc.*trước.*", "", s)
-    s = re.sub(r"\blúc\b.*", "", s)
-    s = re.sub(r"(ở|tại)\s+[^,.;]+", "", s)
-    s = re.sub(r"(hôm nay|mai|mốt|sáng|trưa|chiều|tối|đêm)", "", s)
-    s = re.sub(r"\d{1,2}[:h]\d{0,2}", "", s)
-    s = re.sub(r"\s+", " ", s).strip()
+    s = re.sub(r'\b(nhắc|nhac|tao|tạo|sự kiện|su kien|hãy|hay|giup|giúp)\b', '', s)
+    s = re.sub(r'\d+\s*(phút|phut|p|ph|giờ|gio|g|h)\s*nữa', '', s)
+    s = re.sub(r'nhắc.*trước.*', '', s)
+    s = re.sub(r'\blúc\b.*', '', s)
+    s = re.sub(r'(o|tai)\s+[^,.;]+', '', s)
+    s = re.sub(r'(hôm nay|hom nay|mai|mốt|mot|sáng|sang|trưa|trua|chiều|chieu|tối|toi|đêm|dem)', '', s)
+    s = re.sub(r'\d{1,2}[:h]\d{0,2}', '', s)
+    s = re.sub(r'\s+', ' ', s).strip()
     return s if s else "Sự kiện"
 
-# -------------------------------------
-# main parse
-# -------------------------------------
+# -------------------------
+# Location extraction (also use remove_diacritics variant)
+# -------------------------
+def extract_location(raw: str) -> Optional[str]:
+    # try accented first (original text)
+    m = re.search(r'\b(?:ở|tại|o|tai)\s+([^,.;]+)', raw, flags=re.IGNORECASE)
+    if m:
+        loc = m.group(1).strip()
+        loc = re.sub(r'(nhé|nhé|giúp|giup|giùm).*', '', loc).strip()
+        return loc
+    # fallback to no-diacritics form
+    s = remove_diacritics(raw.lower())
+    m2 = re.search(r'\b(?:o|tai)\s+([^,.;]+)', s)
+    if m2:
+        return m2.group(1).strip()
+    return None
+
+# -------------------------
+# Main parser
+# -------------------------
 def parse_text(text: str) -> Optional[Dict]:
     if not text or not text.strip():
         return None
 
-    raw = text
+    raw = text.strip()
+    # norm WITHOUT removing diacritics (to avoid breaking dateparser/time recognition)
     t = norm(raw)
     now = datetime.now(LOCAL_TZ)
 
-    # relative time
-    rel_min = get_rel_minutes(t)
-    rel_hr  = get_rel_hours(t)
+    # relative minutes/hours
+    m_min = re.search(r'(\d+)\s*(phút|phut|p)\s*nữa', t)
+    m_hr = re.search(r'(\d+)\s*(giờ|gio|g|h)\s*nữa', t)
 
     dt_start = None
-    dt_end = None
 
-    if rel_min:
-        dt_start = now + timedelta(minutes=rel_min)
-    elif rel_hr:
-        dt_start = now + timedelta(hours=rel_hr)
+    if m_min:
+        dt_start = now + timedelta(minutes=int(m_min.group(1)))
+    elif m_hr:
+        dt_start = now + timedelta(hours=int(m_hr.group(1)))
 
-    # remove relative fragment for reminder and name extraction
-    t_no_relative = re.sub(r"\d+(phút|giờ|p|g)\s*nữa", "", t)
+    # remove relative fragment for other extractions
+    t_no_relative = re.sub(r'\d+\s*(phút|phut|p|ph|giờ|gio|g|h)\s*nữa', '', t)
+
     reminder = extract_reminder(t_no_relative)
-
-    # repeat detection
     repeat = extract_repeat(t)
-
-    # location (use raw to preserve punctuation/casing for NER)
     location = extract_location(raw)
 
-    # explicit time handling
+    # if not relative, try absolute parsing: advanced date -> explicit time -> natural times -> dateparser
     if not dt_start:
+        adv_date = extract_advanced_relative_date(t)
+        d = adv_date or extract_date(t) or now.date()
+
+        # natural time guesses (tầm chiều...)
+        nt = guess_natural_time(t)
+
         tm = extract_time(t)
         if tm:
-            h, m = tm
-            d = extract_date(t) or now.date()
-            dt_start = datetime.combine(d, time(h, m))
-        else:
-            # fallback to dateparser
+            h, mn = tm
             try:
-                dt_start = dateparser.parse(raw, languages=["vi"], default=now)
+                dt_start = datetime.combine(d, time(h, mn))
+            except:
+                dt_start = None
+        elif nt:
+            dt_start = datetime.combine(d, nt)
+        else:
+            # fallback to dateparser (use raw because it may contain accents)
+            try:
+                parsed = dateparser.parse(raw, languages=["vi"], default=now)
+                if parsed:
+                    dt_start = parsed
             except:
                 dt_start = None
 
@@ -281,42 +470,43 @@ def parse_text(text: str) -> Optional[Dict]:
         dt_start = LOCAL_TZ.localize(dt_start)
     dt_start = dt_start.replace(second=0, microsecond=0)
 
-    # if user likely meant next day
+    # if time already passed and no explicit 'hôm nay/mai' then move to next day
     if dt_start < now - timedelta(seconds=5):
-        dt_start += timedelta(days=1)
+        dt_start = dt_start + timedelta(days=1)
 
-    # EVENT NAME: use t_no_relative but prefer intent-capture that handles "muốn/cần/..."
+    # event name extraction: use no-relative normalized form but prefer intent-capture (no-diacritics allowed)
+    # pass original raw to intent capture via remove_diacritics inside function
     event_name = clean_event_name(t_no_relative)
 
-    # importance detection
     importance = "normal"
-    if re.search(r"\b(quan trọng|important|ưu tiên)\b", t):
+    if re.search(r'(quan trọng|uu tiên|uu tien|uu tien)', t):
         importance = "important"
-    if re.search(r"\b(cực quan trọng|rất quan trọng|khẩn cấp|urgent)\b", t):
+    if re.search(r'(cực quan trọng|khan cap|khan cấp|khan cap|cuc quan trong)', t):
         importance = "critical"
 
-    result = {
+    return {
         "event": event_name,
         "start_time": to_iso(dt_start),
         "end_time": None,
         "location": location,
-        "reminder_minutes": reminder,
+        "reminder_minutes": int(reminder),
         "importance": importance,
         "repeat": repeat,
         "repeat_count": 0,
         "notified": 0,
         "isStop": 0
     }
-    return result
 
-# quick test harness (run as script)
+# quick self-test if executed directly
 if __name__ == "__main__":
-    cases = [
+    tests = [
+        "Nhắc tôi họp nhóm lúc 10 giờ sáng mai ở phòng 302",
+        "tao cho tui mot cuoc hop sang mai luc 6 gio",
         "5 phút nữa tui muốn họp nhóm, nhắc tui trước 3 phút",
-        "Nhắc tui 5 phút nữa đi học, nhắc trước 1 phút",
-        "Nhắc tôi họp nhóm lúc mười giờ sáng mai ở phòng 302",
+        "Tối mai 19:30 gặp Tùng tại quán cà phê, nhắc trước 10 phút.",
+        "cuối tuần họp dự án"
     ]
-    for c in cases:
-        print("INPUT:", c)
-        print("OUTPUT:", parse_text(c))
-        print("------")
+    for s in tests:
+        print("INPUT:", s)
+        print("OUTPUT:", parse_text(s))
+        print("----")

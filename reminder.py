@@ -81,7 +81,8 @@ def reminder_loop(stop_event: threading.Event):
 
         now_local = datetime.now(LOCAL_TZ)
         events = list_events()
-        print(f"[DEBUG] Kiểm tra {len(events)} sự kiện lúc {now_local.strftime('%H:%M:%S')}")
+        active_events = [e for e in events if e.get("next_notify") is not None]
+        print(f"[DEBUG] Kiểm tra {len(active_events)} sự kiện hoạt động lúc {now_local.strftime('%H:%M:%S')}")
 
         next_wakeup_seconds = CHECK_INTERVAL
 
