@@ -103,6 +103,8 @@ ASCII_MAP = {
     "tao lich": "tạo lịch",
     "tao su kien": "tạo sự kiện",
     "them": "thêm",
+    "nua": "nữa",
+    "truoc": "trước",
 
     "nhacj": "nhắc",
     "nhawk": "nhắc",
@@ -439,9 +441,70 @@ def parse_text(text: str) -> Optional[Dict]:
     t = norm(raw)
     now = datetime.now(LOCAL_TZ)
 
+    # --- FIX mạnh: "nhắc tui 5 phút nữa họp, nhắc trước 3 phút" ---
+    # Hỗ trợ dạng:  X phút nữa <event> , nhắc trước Y (phút|p)
+    m_double = re.search(
+        r'(\d+)\s*(phút|phut|p)\s*(?:nữa|nua)\s+(.+?)\s*(?:,|\s+)?nhắc\s*(?:trước\s*)?(\d+)',
+        t,
+        flags=re.IGNORECASE
+    )
+
+
+
+    if m_double:
+        delta_min = int(m_double.group(1))
+        reminder = int(m_double.group(4))
+        dt_start = now + timedelta(minutes=delta_min)
+
+        # event name cleanup
+        raw_ev = m_double.group(3).strip()
+        raw_ev = re.sub(r'\b(nhắc|truoc|trước|phut|p|giờ|gio)\b.*', '', raw_ev).strip()
+        if not raw_ev:
+            raw_ev = "Sự kiện"
+
+        return {
+            "event": raw_ev,
+            "start_time": to_iso(dt_start),
+            "end_time": None,
+            "location": extract_location(raw),
+            "reminder_minutes": reminder,
+            "importance": "normal",
+            "repeat": None,
+            "repeat_count": 0,
+            "notified": 0,
+            "isStop": 0
+        }
+
+    # --- FIX: "nhac tui 5 phut nua hop" ---
+    m_simple = re.search(r'(\d+)\s*(phút|phut|p)\s*(?:nữa|nua)\s+(.+)', t)
+    if m_simple:
+        dt_start = now + timedelta(minutes=int(m_simple.group(1)))
+        raw_ev = m_simple.group(3).strip()
+        raw_ev = re.sub(r'\b(nhắc|truoc|trước|phut|p|giờ|gio)\b.*', '', raw_ev).strip()
+
+        if not raw_ev:
+            raw_ev = "Sự kiện"
+
+        return {
+            "event": raw_ev,
+            "start_time": to_iso(dt_start),
+            "end_time": None,
+            "location": extract_location(raw),
+            "reminder_minutes": 15,   # mặc định
+            "importance": "normal",
+            "repeat": None,
+            "repeat_count": 0,
+            "notified": 0,
+            "isStop": 0
+        }
+
+
+
+
     # relative minutes/hours
-    m_min = re.search(r'(\d+)\s*(phút|phut|p)\s*nữa', t)
-    m_hr = re.search(r'(\d+)\s*(giờ|gio|g|h)\s*nữa', t)
+    m_min = re.search(r'(\d+)\s*(phút|phut|p)\s*(?:nữa|nua)', t)
+    m_hr  = re.search(r'(\d+)\s*(giờ|gio|g|h)\s*(?:nữa|nua)', t)
+
 
     dt_start = None
 
@@ -494,6 +557,8 @@ def parse_text(text: str) -> Optional[Dict]:
     # if time already passed and no explicit 'hôm nay/mai' then move to next day
     if dt_start < now - timedelta(seconds=5):
         dt_start = dt_start + timedelta(days=1)
+
+
 
     # event name extraction: use no-relative normalized form but prefer intent-capture (no-diacritics allowed)
     # pass original raw to intent capture via remove_diacritics inside function
